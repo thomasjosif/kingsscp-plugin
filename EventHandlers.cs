@@ -40,15 +40,12 @@ namespace KingsSCPSL
 				iTotal++;
 				iNotSpawnedCount++;
 				hubNotSpawnedList.Add(hub.GetInstanceID());
-				
-				hub.Broadcast(10, "NotSpawned");
 			}
 			else
 			{
-				if(hub != null)
+				if (hub != null)
 				{
 					iTotal++;
-					hub.Broadcast(10, "Spawned");
 				}
 			}
 
@@ -59,14 +56,8 @@ namespace KingsSCPSL
 			//Wait 8 seconds to make sure everyone is counted
 			yield return Timing.WaitForSeconds(8f);
 
-			
-			double percent = iNotSpawnedCount / iTotal;
 
-			foreach (GameObject o in PlayerManager.players)
-			{
-				ReferenceHub rh = o.GetComponent<ReferenceHub>();
-				rh.Broadcast(10, $"Percent: {percent} iNotspawnedcount: {iNotSpawnedCount} iTotal: {iTotal}");
-			}
+			double percent = iNotSpawnedCount / iTotal;
 
 			yield return Timing.WaitForSeconds(5f);
 			if (percent >= 0.35)
@@ -88,7 +79,7 @@ namespace KingsSCPSL
 						ReferenceHub rh = o.GetComponent<ReferenceHub>();
 						if (id == rh.GetInstanceID())
 						{
-							if(rh != null)
+							if (rh != null)
 							{
 								rh.Broadcast(10, "Since you didn't spawn natrually you were put in as a ClassD.");
 								rh.characterClassManager.SetClassID(RoleType.ClassD);
@@ -100,15 +91,16 @@ namespace KingsSCPSL
 		}
 		public void OnPlayerDeath(ref PlayerDeathEvent ev)
 		{
-			if (ev.Killer != null && ev.Player != null)
+			/*if (ev.Killer != null && ev.Player != null)
 			{
 				foreach (GameObject o in PlayerManager.players)
 				{
 					ReferenceHub rh = o.GetComponent<ReferenceHub>();
 					if (rh.serverRoles.RemoteAdmin)
-						rh.SendMessage($"{ev.Info.Attacker} killed {ev.Player.nicknameSync.MyNick} - {ev.Player.characterClassManager.UserId} ({ev.Player.characterClassManager.CurClass}) with {ev.Info.Tool}.");
-				} 
-			}
+						rh.queryProcessor.TargetReply(rh.characterClassManager.connectionToClient, $"KingsSCPSL#{ev.Info.Attacker} killed {ev.Player.nicknameSync.MyNick} - {ev.Player.characterClassManager.UserId} ({ev.Player.characterClassManager.CurClass}) with {ev.Info.Tool}.", true, true, string.Empty);
+
+				}
+			}*/
 		}
 	}
 }
