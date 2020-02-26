@@ -91,7 +91,7 @@ namespace KingsSCPSL
 		}
 		public void OnPlayerDeath(ref PlayerDeathEvent ev)
 		{
-			/*if (ev.Killer != null && ev.Player != null)
+			if (ev.Killer != null && ev.Player != null)
 			{
 				foreach (GameObject o in PlayerManager.players)
 				{
@@ -100,7 +100,7 @@ namespace KingsSCPSL
 						rh.queryProcessor.TargetReply(rh.characterClassManager.connectionToClient, $"KingsSCPSL#{ev.Info.Attacker} killed {ev.Player.nicknameSync.MyNick} - {ev.Player.characterClassManager.UserId} ({ev.Player.characterClassManager.CurClass}) with {ev.Info.Tool}.", true, true, string.Empty);
 
 				}
-			}*/
+			}
 		}
 	}
 }
