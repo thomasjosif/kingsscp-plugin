@@ -18,7 +18,7 @@ namespace KingsSCPSL
 				//Hook the events you will be using in the plugin. You should hook all events you will be using here, all events should be unhooked in OnDisabled 
 				Events.PlayerDeathEvent += EventHandlers.OnPlayerDeath;
 				Events.RoundStartEvent += EventHandlers.OnRoundStart;
-				Log.Info($"KingsSCPSL plugin loaded. c:");
+				Log.Info($"KingsSCPSL plugin loaded. Written by Thomasjosif");
 			}
 			catch (Exception e)
 			{
@@ -31,7 +31,6 @@ namespace KingsSCPSL
 		{
 			Events.PlayerDeathEvent -= EventHandlers.OnPlayerDeath;
 			Events.RoundStartEvent -= EventHandlers.OnRoundStart;
-			
 			EventHandlers = null;
 		}
 

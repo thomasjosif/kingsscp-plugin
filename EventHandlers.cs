@@ -83,6 +83,10 @@ namespace KingsSCPSL
 							{
 								rh.Broadcast(10, "Since you didn't spawn natrually you were put in as a ClassD.");
 								rh.characterClassManager.SetClassID(RoleType.ClassD);
+
+								// Clear inventory to prevent issues when someone was a guard, then spawns in as a ClassD after snap.
+								yield return Timing.WaitForSeconds(2f);
+								rh.inventory.Clear();
 							}
 						}
 					}
@@ -92,12 +96,12 @@ namespace KingsSCPSL
 		public void OnPlayerDeath(ref PlayerDeathEvent ev)
 		{
 			if (ev.Killer != null && ev.Player != null)
-			{
+			{ 
 				foreach (GameObject o in PlayerManager.players)
 				{
 					ReferenceHub rh = o.GetComponent<ReferenceHub>();
 					if (rh.serverRoles.RemoteAdmin)
-						rh.queryProcessor.TargetReply(rh.characterClassManager.connectionToClient, $"KingsSCPSL#{ev.Info.Attacker} ({ev.Killer.characterClassManager.CurClass}) killed {ev.Player.nicknameSync.MyNick} - {ev.Player.characterClassManager.UserId} ({ev.Player.characterClassManager.CurClass}) with {ev.Info.Tool}.", true, true, string.Empty);
+						rh.queryProcessor.TargetReply(rh.characterClassManager.connectionToClient, $"KingsSCPSL#{ev.Info.Attacker} ({ev.Killer.characterClassManager.CurClass}) killed {ev.Player.nicknameSync.MyNick} - {ev.Player.characterClassManager.UserId} ({ev.Player.characterClassManager.CurClass}) with {DamageTypes.FromIndex(ev.Info.Tool)}.", true, true, string.Empty);
 
 				}
 			}
