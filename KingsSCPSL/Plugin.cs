@@ -1,5 +1,13 @@
-using System;
 using EXILED;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using MEC;
+using Scp914;
+using Harmony;
+
 
 namespace KingsSCPSL
 {
@@ -7,7 +15,10 @@ namespace KingsSCPSL
 	{
 		//Instance variable for eventhandlers
 		public EventHandlers EventHandlers;
-		
+
+		public CoroutineHandle cor;
+		public static List<CoroutineHandle> Coroutines = new List<CoroutineHandle>();
+
 		public override void OnEnable()
 		{
 			try
@@ -16,8 +27,14 @@ namespace KingsSCPSL
 				//Set instance varible to a new instance, this should be nulled again in OnDisable
 				EventHandlers = new EventHandlers(this);
 				//Hook the events you will be using in the plugin. You should hook all events you will be using here, all events should be unhooked in OnDisabled 
+				Events.PlayerLeaveEvent += EventHandlers.OnPlayerDisconnect;
 				Events.PlayerDeathEvent += EventHandlers.OnPlayerDeath;
 				Events.RoundStartEvent += EventHandlers.OnRoundStart;
+				Events.RemoteAdminCommandEvent += EventHandlers.OnCommand;
+				Events.ConsoleCommandEvent += EventHandlers.OnConsoleCommand;
+				Events.RoundEndEvent += EventHandlers.OnRoundEnd;
+				Events.WaitingForPlayersEvent += EventHandlers.OnWaitingForPlayers;
+				Events.TeamRespawnEvent += EventHandlers.OnTeamRespawn;
 				Log.Info($"KingsSCPSL plugin loaded. Written by Thomasjosif");
 			}
 			catch (Exception e)
@@ -29,9 +46,17 @@ namespace KingsSCPSL
 
 		public override void OnDisable()
 		{
+			Events.PlayerLeaveEvent -= EventHandlers.OnPlayerDisconnect;
 			Events.PlayerDeathEvent -= EventHandlers.OnPlayerDeath;
 			Events.RoundStartEvent -= EventHandlers.OnRoundStart;
+			Events.RemoteAdminCommandEvent -= EventHandlers.OnCommand;
+			Events.ConsoleCommandEvent -= EventHandlers.OnConsoleCommand;
+			Events.RoundEndEvent -= EventHandlers.OnRoundEnd;
+			Events.WaitingForPlayersEvent -= EventHandlers.OnWaitingForPlayers;
+			Events.TeamRespawnEvent -= EventHandlers.OnTeamRespawn;
 			EventHandlers = null;
+
+			Timing.KillCoroutines(cor);
 		}
 
 		public override void OnReload()
