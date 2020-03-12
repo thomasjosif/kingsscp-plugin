@@ -30,12 +30,19 @@ namespace KingsSCPSL
 		private int iNotSpawnedCount = 0;
 
 		private static string sRespawnQueue = "4014314031441404134041431430144144134414314031441441331441440131";
-		char[] sRespawnQueueArray = sRespawnQueue.ToCharArray();
-
+		char[] sRespawnQueueArray;
+		
 		private List<string> hubNotSpawnedList = new List<string>();
 		private List<string> hubAFKList = new List<string>();
 		private List<string> hubAFKToBeKickedList = new List<string>();
+		public Dictionary<RoleType, int> RolesHealth;
+		public CustomInventory Inventories;
 
+		public EventHandlers(Dictionary<RoleType, int> health, CustomInventory inven)
+		{
+			RolesHealth = health;
+			Inventories = inven;
+		}
 		public void OnPlayerDisconnect(PlayerLeaveEvent ev)
 		{
 			// Remove unused ID's from the lists because it would just stack up if we didn't.
@@ -51,6 +58,12 @@ namespace KingsSCPSL
 
 		public void OnRoundStart()
 		{
+			sRespawnQueueArray = sRespawnQueue.ToCharArray();
+			iClassDCount = 0;
+			iScientistCount = 0;
+			iFacilityGuardCount = 0;
+			iSCPCount = 0;
+			iNotSpawnedCount = 0;
 			hubNotSpawnedList.Clear();
 
 			foreach (ReferenceHub hub in Player.GetHubs())
@@ -67,25 +80,34 @@ namespace KingsSCPSL
 			// Wait 4 seconds to make sure everyone is spawned in correctly
 			yield return Timing.WaitForSeconds(4f);
 
-			iTotalPlayers++;
-			switch(hub.characterClassManager.CurClass)
+			switch (hub.characterClassManager.CurClass)
 			{
 				case RoleType.ClassD:
+					iTotalPlayers++;
 					iClassDCount++;
 					break;
 				case RoleType.Scientist:
+					iTotalPlayers++;
 					iScientistCount++;
 					break;
-				case RoleType.Scp049: case RoleType.Scp079: case RoleType.Scp106:
-				case RoleType.Scp173: case RoleType.Scp096: case RoleType.Scp93953: case RoleType.Scp93989:
+				case RoleType.Scp049:
+				case RoleType.Scp079:
+				case RoleType.Scp106:
+				case RoleType.Scp173:
+				case RoleType.Scp096:
+				case RoleType.Scp93953:
+				case RoleType.Scp93989:
+					iTotalPlayers++;
 					iSCPCount++;
 					break;
 				case RoleType.FacilityGuard:
+					iTotalPlayers++;
 					iFacilityGuardCount++;
 					break;
 				case RoleType.Spectator:
 					if (!hub.GetOverwatch())
 					{
+						iTotalPlayers++;
 						iNotSpawnedCount++;
 						hubNotSpawnedList.Add(hub.GetUserId());
 					}
@@ -95,19 +117,22 @@ namespace KingsSCPSL
 
 		public IEnumerator<float> CheckForSnap()
 		{
+
 			//Wait 8 seconds to make sure everyone is counted
 			yield return Timing.WaitForSeconds(8f);
 			var random = new System.Random();
 
-			for (int i = 1; i < iTotalPlayers; i++)
+			for (int i = 0; i <= iTotalPlayers; i++)
 			{
 				if (hubNotSpawnedList.Count <= 0)
 					break;
-				int teamnum = (int)Char.GetNumericValue(sRespawnQueueArray[i]);
+				else
+					Log.Info("Server snap detected!");
+				int teamnum = (int)Char.GetNumericValue(sRespawnQueueArray[0]);
 				bool tospawn = false;
 				RoleType roletospawn = RoleType.None;
 
-				switch(teamnum)
+				switch (teamnum)
 				{
 					case 0:
 						{
@@ -180,8 +205,8 @@ namespace KingsSCPSL
 							break;
 						}
 				}
-				sRespawnQueueArray = RemoveFromArrayAt(sRespawnQueueArray, i);
-				if(tospawn)
+				sRespawnQueueArray = RemoveFromArrayAt(sRespawnQueueArray, 0);
+				if (tospawn)
 				{
 					int index;
 					ReferenceHub playertospawn;
@@ -190,10 +215,14 @@ namespace KingsSCPSL
 						index = random.Next(hubNotSpawnedList.Count());
 						playertospawn = Player.GetPlayer(hubNotSpawnedList[index]);
 						hubNotSpawnedList.Remove(hubNotSpawnedList[index]);
-						if(playertospawn.characterClassManager.CurClass == RoleType.Spectator && playertospawn != null && !playertospawn.GetOverwatch())
+						if (playertospawn.characterClassManager.CurClass == RoleType.Spectator && playertospawn != null && !playertospawn.GetOverwatch())
 						{
+							Log.Info($"Spawning in valid player {playertospawn.nicknameSync.MyNick} as {Enum.GetName(typeof(RoleType), roletospawn)}");
+
 							playertospawn.characterClassManager.SetClassID(roletospawn);
-							playertospawn.Broadcast(10, $"Since you didn't spawn natrually you were put in as a {Enum.GetName(typeof(RoleType), roletospawn)}", false);
+							playertospawn.Broadcast(10, $"Since you didn't spawn naturally you were put in as a {Enum.GetName(typeof(RoleType), roletospawn)}", false);
+							playertospawn.SetHealth(RolesHealth[roletospawn]);
+							GiveSpawnItemsToPlayer(playertospawn);
 							break;
 						}
 					}
@@ -212,13 +241,13 @@ namespace KingsSCPSL
 					string userid = rh.GetUserId(); 
 					if(hubAFKList.Contains(userid))
 					{
-						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type `back` in console to be removed from overwatch.", false);
+						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch.", false);
 						if (!rh.GetOverwatch())
 							rh.SetOverwatch(true);
 					}
 					if (hubAFKToBeKickedList.Contains(userid))
 					{
-						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. <b>Please type `back` in console to be removed from overwatch.</b><br> <color=red>YOU WILL BE KICKED AUTOMATICALLY IF YOU DO NOT RETURN BEFORE THE NEXT SPAWNWAVE!</color>", false);
+						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch. <color=red> YOU WILL BE AUTOMATICALLY KICKED NEXT MTF SPAWN IF YOU REMAIN AFK!</color>", false);
 						if (!rh.GetOverwatch())
 							rh.SetOverwatch(true);
 					}
@@ -232,17 +261,19 @@ namespace KingsSCPSL
 			{
 				ReferenceHub rh = o.GetComponent<ReferenceHub>();
 				string userid = rh.GetUserId();
-				if (hubAFKList.Contains(userid))
-				{
-					// User has been AFK for 1 MTF/Chaos respawn.
-					hubAFKList.Remove(userid);
-					hubAFKToBeKickedList.Add(userid);
-				}
 				if (hubAFKToBeKickedList.Contains(userid))
 				{
 					// User has been AFK for 2 MTF/Chaos respawns, kick now.
 					hubAFKToBeKickedList.Remove(userid);
 					ServerConsole.Disconnect(o, "You were automatically kicked for being AFK for more than 2 team respawns!");
+
+				}
+				if (hubAFKList.Contains(userid))
+				{
+					// User has been AFK for 1 MTF/Chaos respawn.
+					hubAFKList.Remove(userid);
+					hubAFKToBeKickedList.Add(userid);
+					rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch. <color=red> YOU WILL BE AUTOMATICALLY KICKED SOON!</color>", false);
 				}
 			}
 		}
@@ -302,6 +333,7 @@ namespace KingsSCPSL
 							}
 							if (rh.characterClassManager.CurClass != RoleType.Spectator)
 							{
+								rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch.", false);
 								rh.characterClassManager.SetClassID(RoleType.Spectator);
 								rh.SetOverwatch(true);
 								hubAFKList.Add(rh.GetUserId());
@@ -322,14 +354,13 @@ namespace KingsSCPSL
 
 		public void OnConsoleCommand(ConsoleCommandEvent ev)
 		{
-			string[] args = ev.Command.Split(' ');
-
 			try
 			{
-				switch (args[0].ToLower())
+				switch (ev.Command)
 				{
 					case "back":
 						{
+							Log.Info("Back command ran");
 							string userid = ev.Player.GetUserId();
 							if (hubAFKList.Contains(userid))
 								hubAFKList.Remove(userid);
@@ -370,6 +401,92 @@ namespace KingsSCPSL
 			Array.Copy(source, removeAt + 1, result, removeAt, source.Length - removeAt - 1);
 
 			return result;
+		}
+
+		public void GiveSpawnItemsToPlayer(ReferenceHub player)
+		{
+			player.inventory.Clear();
+			switch (player.characterClassManager.CurClass)
+			{
+				case RoleType.ClassD:
+					foreach (ItemType item in Inventories.ClassD)
+					{
+						player.inventory.AddNewItem(item);
+					}
+					player.ammoBox.SetOneAmount(0, "0");
+					player.ammoBox.SetOneAmount(1, "0");
+					player.ammoBox.SetOneAmount(2, "0");
+					break;
+				case RoleType.ChaosInsurgency:
+					foreach (ItemType item in Inventories.Chaos)
+					{
+						player.inventory.AddNewItem(item);
+
+					}
+					player.ammoBox.SetOneAmount(1, "90");
+					player.ammoBox.SetOneAmount(2, "250");
+					player.ammoBox.SetOneAmount(3, "125");
+					break;
+				case RoleType.NtfCadet:
+					foreach (ItemType item in Inventories.NtfCadet)
+					{
+						player.inventory.AddNewItem(item);
+
+					}
+					player.ammoBox.SetOneAmount(0, "120");
+					player.ammoBox.SetOneAmount(1, "120");
+					player.ammoBox.SetOneAmount(2, "250");
+					break;
+				case RoleType.NtfCommander:
+					foreach (ItemType item in Inventories.NtfCommander)
+					{
+						player.inventory.AddNewItem(item);
+					}
+					player.ammoBox.SetOneAmount(0, "120");
+					player.ammoBox.SetOneAmount(1, "0");
+					player.ammoBox.SetOneAmount(2, "100");
+					break;
+				case RoleType.NtfLieutenant:
+					foreach (ItemType item in Inventories.NtfLieutenant)
+					{
+						player.inventory.AddNewItem(item);
+
+					}
+					player.ammoBox.SetOneAmount(0, "250");
+					player.ammoBox.SetOneAmount(1, "125");
+					player.ammoBox.SetOneAmount(2, "125");
+					break;
+				case RoleType.NtfScientist:
+					foreach (ItemType item in Inventories.NtfScientist)
+					{
+						player.inventory.AddNewItem(item);
+
+					}
+					player.ammoBox.SetOneAmount(0, "320");
+					player.ammoBox.SetOneAmount(1, "125");
+					player.ammoBox.SetOneAmount(2, "125");
+					break;
+				case RoleType.Scientist:
+					foreach (ItemType item in Inventories.Scientist)
+					{
+						player.inventory.AddNewItem(item);
+
+					}
+					player.ammoBox.SetOneAmount(0, "0");
+					player.ammoBox.SetOneAmount(1, "0");
+					player.ammoBox.SetOneAmount(2, "0");
+					break;
+				case RoleType.FacilityGuard:
+					foreach (ItemType item in Inventories.Guard)
+					{
+						player.inventory.AddNewItem(item);
+
+					}
+					player.ammoBox.SetOneAmount(0, "80");
+					player.ammoBox.SetOneAmount(1, "145");
+					player.ammoBox.SetOneAmount(2, "80");
+					break;
+			}
 		}
 	}
 }
