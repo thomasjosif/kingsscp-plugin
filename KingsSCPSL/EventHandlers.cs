@@ -14,7 +14,14 @@ using Log = EXILED.Log;
 using Object = UnityEngine.Object;
 using Harmony;
 using static KingsSCPSL.Plugin;
+using static KingsSCPSL.PlayerManagement;
+using System.Text;
+using System.Threading.Tasks;
+using LiteNetLib;
+using Newtonsoft.Json.Linq;
 
+using LiteNetLib4Mirror;
+using LiteNetLib.Utils;
 namespace KingsSCPSL
 {
 	public class EventHandlers
@@ -42,6 +49,35 @@ namespace KingsSCPSL
 		{
 			RolesHealth = health;
 			Inventories = inven;
+		}
+		public void OnPlayerConnect(PlayerJoinEvent ev)
+		{
+			_ = ConnectChecks(ev);
+		}
+
+		public async Task ConnectChecks(PlayerJoinEvent ev)
+		{
+			if (await PlayerManagement.IsBanned(ev.Player.GetUserId(), false))
+			{
+				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, "<size=70><color=red>You are banned. </color><size=70>Please visit <color=blue> https://bans.kingsplayground.fun/ </color>for more information.</size></size>");
+			}
+			else if(await PlayerManagement.IsBanned(ev.Player.GetIpAddress(), true))
+			{
+				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, "<size=70><color=red>You are banned. </color><size=70>Please visit <color=blue> https://bans.kingsplayground.fun/ </color>for more information.</size></size>");
+			}
+			else
+			{
+				try
+				{
+					UserGroup group = ServerStatic.GetPermissionsHandler().GetGroup(await PlayerManagement.GetAdminRole(ev.Player.GetUserId()));
+					ev.Player.SetRank(group);
+				}
+				catch(Exception e)
+				{
+					Log.Error($"Error while trying to add rank from web API to player! Exception: {e}");
+				}
+			}
+			return;
 		}
 		public void OnPlayerDisconnect(PlayerLeaveEvent ev)
 		{
@@ -245,11 +281,15 @@ namespace KingsSCPSL
 						if (!rh.GetOverwatch())
 							rh.SetOverwatch(true);
 					}
-					if (hubAFKToBeKickedList.Contains(userid))
+					else if (hubAFKToBeKickedList.Contains(userid))
 					{
 						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch. <color=red> YOU WILL BE AUTOMATICALLY KICKED NEXT MTF SPAWN IF YOU REMAIN AFK!</color>", false);
 						if (!rh.GetOverwatch())
 							rh.SetOverwatch(true);
+					}
+					else if (rh.GetOverwatch())
+					{
+						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> Please type \".back\" in console to be removed from overwatch.", false);
 					}
 				}
 			}
@@ -290,6 +330,46 @@ namespace KingsSCPSL
 
 				}
 			}
+		}
+
+		public void OnPlayerBanned(PlayerBannedEvent ev)
+		{
+			_ = DoBan(ev);
+		}
+
+		public async Task DoBan(PlayerBannedEvent ev) 
+		{
+			
+			string banned_user_id = ev.Details.Id;
+			double banduration = TimeSpan.FromTicks(ev.Details.Expires - ev.Details.IssuanceTime).TotalSeconds;
+			ReferenceHub adminHub = Player.GetPlayer(ev.Details.Issuer);
+			string adminId = await PlayerManagement.GetAdminID(adminHub.GetUserId());
+
+			Log.Info("Ban DETECTED:");
+			Log.Info($"Banned ID: {banned_user_id}");
+			Log.Info($"Admin Name: {adminHub.nicknameSync.MyNick}");
+			Log.Info($"Admin ID: {adminId}");
+			Log.Info($"Duration: {banduration}");
+			if(banduration.ToString().Contains("1576800000"))
+			{
+				banduration = 0;
+				Log.Info($"Duration UPDATED TO PERM!");
+			}
+			
+			if (await PlayerManagement.IssueBan(banned_user_id, ev.Details.OriginalName, adminId, banduration.ToString(), ev.Type))
+			{
+				Log.Info($"Successfully pushed ban for {banned_user_id} to the web API!");
+
+				// We can safely remove the ban since the web client will handle it from here.
+				BanHandler.RemoveBan(ev.Details.Id, ev.Type);
+			}
+			else
+			{
+				// Error out to requesting admin
+				adminHub.Broadcast(15, $"ERROR while adding ban to web API for: {ev.Details.OriginalName}({banned_user_id})", false);
+				Log.Error($"FATAL BANNING ERROR! PlayerManagement.IssueBan() Failed to push to web API");
+			}
+			
 		}
 
 		public void OnCommand(ref RACommandEvent ev)

@@ -20,8 +20,9 @@ namespace KingsSCPSL
         public CustomInventory Inventories = new CustomInventory();
         public static List<CoroutineHandle> Coroutines = new List<CoroutineHandle>();
 		public Dictionary<RoleType, int> roleHealth = new Dictionary<RoleType, int>();
+        public static string APIKey;
 
-		public override void OnEnable()
+        public override void OnEnable()
 		{
             Dictionary<string, string> configHealth = KConf.ExiledConfiguration.GetDictonaryValue(Config.GetString("util_role_health", "NtfCommander:400,NtfScientist:350"));
 
@@ -66,6 +67,7 @@ namespace KingsSCPSL
                     KConf.ExiledConfiguration.GetListStringValue(Config.GetString("util_guard_inventory",
                         null)));
 
+                Plugin.APIKey = Plugin.Config.GetString("kings_apikey", null);
                 Log.Info("Loaded Inventories.");
             }
             catch (Exception e)
@@ -78,8 +80,9 @@ namespace KingsSCPSL
 				Log.Debug("Initializing event handlers..");
 				//Set instance varible to a new instance, this should be nulled again in OnDisable
 				EventHandlers = new EventHandlers(roleHealth, Inventories);
-				//Hook the events you will be using in the plugin. You should hook all events you will be using here, all events should be unhooked in OnDisabled 
-				Events.PlayerLeaveEvent += EventHandlers.OnPlayerDisconnect;
+                //Hook the events you will be using in the plugin. You should hook all events you will be using here, all events should be unhooked in OnDisabled 
+                Events.PlayerJoinEvent += EventHandlers.OnPlayerConnect;
+                Events.PlayerLeaveEvent += EventHandlers.OnPlayerDisconnect;
 				Events.PlayerDeathEvent += EventHandlers.OnPlayerDeath;
 				Events.RoundStartEvent += EventHandlers.OnRoundStart;
 				Events.RemoteAdminCommandEvent += EventHandlers.OnCommand;
@@ -87,6 +90,7 @@ namespace KingsSCPSL
 				Events.RoundEndEvent += EventHandlers.OnRoundEnd;
 				Events.WaitingForPlayersEvent += EventHandlers.OnWaitingForPlayers;
 				Events.TeamRespawnEvent += EventHandlers.OnTeamRespawn;
+                Events.PlayerBannedEvent += EventHandlers.OnPlayerBanned;
 				Log.Info($"KingsSCPSL plugin loaded. Written by Thomasjosif");
 			}
 			catch (Exception e)
@@ -101,7 +105,8 @@ namespace KingsSCPSL
 		{
 			roleHealth.Clear();
 
-			Events.PlayerLeaveEvent -= EventHandlers.OnPlayerDisconnect;
+            Events.PlayerJoinEvent -= EventHandlers.OnPlayerConnect;
+            Events.PlayerLeaveEvent -= EventHandlers.OnPlayerDisconnect;
 			Events.PlayerDeathEvent -= EventHandlers.OnPlayerDeath;
 			Events.RoundStartEvent -= EventHandlers.OnRoundStart;
 			Events.RemoteAdminCommandEvent -= EventHandlers.OnCommand;
@@ -109,7 +114,8 @@ namespace KingsSCPSL
 			Events.RoundEndEvent -= EventHandlers.OnRoundEnd;
 			Events.WaitingForPlayersEvent -= EventHandlers.OnWaitingForPlayers;
 			Events.TeamRespawnEvent -= EventHandlers.OnTeamRespawn;
-			EventHandlers = null;
+            Events.PlayerBannedEvent -= EventHandlers.OnPlayerBanned;
+            EventHandlers = null;
 
 			Timing.KillCoroutines(cor);
 		}

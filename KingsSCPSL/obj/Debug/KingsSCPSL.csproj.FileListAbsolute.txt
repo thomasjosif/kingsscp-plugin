@@ -1,4 +1,3 @@
-D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\obj\Debug\KingsSCPSL.csprojAssemblyReference.cache
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\0Harmony.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\Assembly-CSharp-firstpass.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\Assembly-CSharp_publicized.dll
@@ -55,3 +54,4 @@ D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\KingsSCPSL.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\KingsSCPSL.pdb
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\obj\Debug\KingsSCPSL.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\obj\Debug\KingsSCPSL.pdb
+D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\obj\Debug\KingsSCPSL.csprojAssemblyReference.cache
