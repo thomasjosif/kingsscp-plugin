@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Net;
 using System.Net.Http;
-using Newtonsoft.Json.Linq;
 using EXILED;
 using EXILED.Extensions;
 using GameCore;
@@ -43,7 +42,7 @@ namespace KingsSCPSL
                     typeofban = "1";
                 }
                 var webRequest = await client.GetAsync("https://bans.kingsplayground.fun/issueban.php?KEY=" + Plugin.APIKey + "&STEAMID=" + userID + "&USERNAME=" + userName + "&AID=" + adminID + "&TYPE=" + typeofban + "&DURATION=" + durationinseconds);
-                
+
                 if (!webRequest.IsSuccessStatusCode)
                 {
                     Log.Error("Web API connection error in IssueBan(): " + webRequest.StatusCode + " - " + webRequest.Content.ReadAsStringAsync());
@@ -59,12 +58,12 @@ namespace KingsSCPSL
             }
         }
 
-        public static async Task<bool> IsBanned(string userID, bool ipcheck) 
+        public static async Task<bool> IsBanned(string userID, bool ipcheck)
         {
             using (HttpClient client = new HttpClient())
             {
                 string ipcheckstatus = "UID";
-                if(ipcheck)
+                if (ipcheck)
                 {
                     ipcheckstatus = "IP";
                 }
@@ -117,6 +116,24 @@ namespace KingsSCPSL
                 string apiResponse = await webRequest.Content.ReadAsStringAsync();
 
                 return apiResponse;
+            }
+        }
+
+        public static async Task<bool> UpdatePlaytime(string userID, long connecttime, long disconnecttime, int serverport)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                var webRequest = await client.GetAsync("https://bans.kingsplayground.fun/playtime.php?KEY=" + Plugin.APIKey + "&STEAMID=" + userID + "&CONNECT=" + connecttime + "&DISCONNECT=" + disconnecttime + "&PORT=" + serverport);
+                if (!webRequest.IsSuccessStatusCode)
+                {
+                    Log.Error("Web API connection error in UpdatePlaytime(): " + webRequest.StatusCode + " - " + webRequest.Content.ReadAsStringAsync());
+                    return false;
+                }
+
+                string apiResponse = await webRequest.Content.ReadAsStringAsync();
+
+                Log.Debug($"[Playtime] The player API returned: {apiResponse}");
+                return true;
             }
         }
     }

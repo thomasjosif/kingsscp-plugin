@@ -18,8 +18,6 @@ using static KingsSCPSL.PlayerManagement;
 using System.Text;
 using System.Threading.Tasks;
 using LiteNetLib;
-using Newtonsoft.Json.Linq;
-
 using LiteNetLib4Mirror;
 using LiteNetLib.Utils;
 namespace KingsSCPSL
@@ -29,20 +27,28 @@ namespace KingsSCPSL
 		public Plugin plugin;
 		public EventHandlers(Plugin plugin) => this.plugin = plugin;
 
+		public static string MSG_PREFIX = "<color=white>[</color><color=green>KingsSCPSL</color><color=white>]</color>";
+		public static string BAN_MSG = "<size=70><color=red>You are banned. </color><size=70>Please visit <color=blue> https://bans.kingsplayground.fun/ </color>for more information.</size></size>";
 		private int iSCPCount = 0;
 		private int iFacilityGuardCount = 0;
 		private int iClassDCount = 0;
 		private int iScientistCount = 0;
 		private int iTotalPlayers = 0;
 		private int iNotSpawnedCount = 0;
+		private int iTotalChaos = 0;
+		private bool bChaosOnStart = false;
+
+		private bool bRoundStarted = false;
+		private bool bSpectatorsMuted = false;
 
 		private static string sRespawnQueue = "4014314031441404134041431430144144134414314031441441331441440131";
 		char[] sRespawnQueueArray;
-		
+
 		private List<string> hubNotSpawnedList = new List<string>();
-		private List<string> hubAFKList = new List<string>();
-		private List<string> hubAFKToBeKickedList = new List<string>();
+		private List<string> hubMutedList = new List<string>();
+
 		public Dictionary<RoleType, int> RolesHealth;
+		public Dictionary<string, long> ConnectTime = new Dictionary<string, long>();
 		public CustomInventory Inventories;
 
 		public EventHandlers(Dictionary<RoleType, int> health, CustomInventory inven)
@@ -59,11 +65,11 @@ namespace KingsSCPSL
 		{
 			if (await PlayerManagement.IsBanned(ev.Player.GetUserId(), false))
 			{
-				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, "<size=70><color=red>You are banned. </color><size=70>Please visit <color=blue> https://bans.kingsplayground.fun/ </color>for more information.</size></size>");
+				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, $"{BAN_MSG}");
 			}
-			else if(await PlayerManagement.IsBanned(ev.Player.GetIpAddress(), true))
+			else if (await PlayerManagement.IsBanned(ev.Player.GetIpAddress(), true))
 			{
-				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, "<size=70><color=red>You are banned. </color><size=70>Please visit <color=blue> https://bans.kingsplayground.fun/ </color>for more information.</size></size>");
+				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, $"{BAN_MSG}");
 			}
 			else
 			{
@@ -71,12 +77,25 @@ namespace KingsSCPSL
 				{
 					UserGroup group = ServerStatic.GetPermissionsHandler().GetGroup(await PlayerManagement.GetAdminRole(ev.Player.GetUserId()));
 					ev.Player.SetRank(group);
+					Log.Info($"Setting player rank now {ev.Player.nicknameSync.MyNick}");
 				}
-				catch(Exception e)
+				catch (Exception e)
 				{
 					Log.Error($"Error while trying to add rank from web API to player! Exception: {e}");
 				}
+				long unixTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+				ConnectTime[ev.Player.GetUserId()] = unixTimestamp;
 			}
+
+			/*if (bSpectatorsMuted)
+			{
+				if (!ev.Player.CheckPermission("king.ignoremute"))
+				{
+					hubMutedList.Add(ev.Player.GetUserId());
+					ev.Player.Mute();
+					ev.Player.Broadcast(10, "[KingsSCPSL] Spectator Chat has been muted until round start to preserve order.", false);
+				}
+			}*/
 			return;
 		}
 		public void OnPlayerDisconnect(PlayerLeaveEvent ev)
@@ -86,20 +105,33 @@ namespace KingsSCPSL
 
 			if (hubNotSpawnedList.Contains(userid))
 				hubNotSpawnedList.Remove(userid);
-			if (hubAFKList.Contains(userid))
-				hubAFKList.Remove(userid);
-			if (hubAFKToBeKickedList.Contains(userid))
-				hubAFKToBeKickedList.Remove(userid);
+
+			TryReplacePlayer(ev.Player);
+
+			_ = DisconnectChecks(ev);
+
+		}
+
+		public async Task DisconnectChecks(PlayerLeaveEvent ev)
+		{
+			long unixTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+			long connectTime = ConnectTime[ev.Player.GetUserId()];
+			Log.Info($"[Playtime Checker] Logging Playtime for {ev.Player.GetUserId()} Connect: {connectTime} Disconnect: {unixTimestamp} Port: {ServerConsole.Port}");
+			await PlayerManagement.UpdatePlaytime(ev.Player.GetUserId(), connectTime, unixTimestamp, ServerConsole.Port);
 		}
 
 		public void OnRoundStart()
 		{
+			RoundSummary.RoundLock = true;
+			bRoundStarted = true;
 			sRespawnQueueArray = sRespawnQueue.ToCharArray();
 			iClassDCount = 0;
 			iScientistCount = 0;
 			iFacilityGuardCount = 0;
 			iSCPCount = 0;
 			iNotSpawnedCount = 0;
+			iTotalChaos = 0;
+			bChaosOnStart = false;
 			hubNotSpawnedList.Clear();
 
 			foreach (ReferenceHub hub in Player.GetHubs())
@@ -107,7 +139,6 @@ namespace KingsSCPSL
 				// Since this event fires before everyone has initially spawned, you need to wait before doing things like changing their health, adding items, etc
 				Timing.RunCoroutine(CountSpawnedPlayers(hub));
 			}
-			Coroutines.Add(Timing.RunCoroutine(AFKCheckTimer()));
 			Timing.RunCoroutine(CheckForSnap());
 		}
 
@@ -118,6 +149,10 @@ namespace KingsSCPSL
 
 			switch (hub.characterClassManager.CurClass)
 			{
+				case RoleType.ChaosInsurgency:
+					bChaosOnStart = true;
+					iTotalChaos++;
+					break;
 				case RoleType.ClassD:
 					iTotalPlayers++;
 					iClassDCount++;
@@ -149,11 +184,20 @@ namespace KingsSCPSL
 					}
 					break;
 			}
+
+//			foreach (GameObject o in PlayerManager.players)
+	//		{
+		//		ReferenceHub rh = o.GetComponent<ReferenceHub>();
+			//	rh.Broadcast(10, $"Chaos: {iTotalChaos} Facility: {iFacilityGuardCount} SCP: {iSCPCount} DBoi: {iClassDCount} Scie: {iScientistCount}", false);
+			//}
+			// Possibly fix issue where "SCP's WIN" at beginning of round	
+			yield return Timing.WaitForSeconds(60f);
+			RoundSummary.RoundLock = false;
 		}
 
 		public IEnumerator<float> CheckForSnap()
 		{
-
+			
 			//Wait 8 seconds to make sure everyone is counted
 			yield return Timing.WaitForSeconds(8f);
 			var random = new System.Random();
@@ -180,7 +224,7 @@ namespace KingsSCPSL
 							{
 								tospawn = true;
 								int scprand = random.Next(0, 4);
-								switch(scprand)
+								switch (scprand)
 								{
 									case 0:
 										roletospawn = RoleType.Scp049;
@@ -203,16 +247,32 @@ namespace KingsSCPSL
 						}
 					case 1:
 						{
-							if (iFacilityGuardCount > 0)
+							if (bChaosOnStart)
 							{
-								iFacilityGuardCount--;
+								if (iTotalChaos > 0)
+								{
+									iTotalChaos--;
+								}
+								else
+								{
+									tospawn = true;
+									roletospawn = RoleType.ChaosInsurgency;
+								}
+								break;
 							}
 							else
 							{
-								tospawn = true;
-								roletospawn = RoleType.FacilityGuard;
+								if (iFacilityGuardCount > 0)
+								{
+									iFacilityGuardCount--;
+								}
+								else
+								{
+									tospawn = true;
+									roletospawn = RoleType.FacilityGuard;
+								}
+								break;
 							}
-							break;
 						}
 					case 3:
 						{
@@ -246,7 +306,7 @@ namespace KingsSCPSL
 				{
 					int index;
 					ReferenceHub playertospawn;
-					for(; ; )
+					for (; ; )
 					{
 						index = random.Next(hubNotSpawnedList.Count());
 						playertospawn = Player.GetPlayer(hubNotSpawnedList[index]);
@@ -256,7 +316,7 @@ namespace KingsSCPSL
 							Log.Info($"Spawning in valid player {playertospawn.nicknameSync.MyNick} as {Enum.GetName(typeof(RoleType), roletospawn)}");
 
 							playertospawn.characterClassManager.SetClassID(roletospawn);
-							playertospawn.Broadcast(10, $"Since you didn't spawn naturally you were put in as a {Enum.GetName(typeof(RoleType), roletospawn)}", false);
+							playertospawn.Broadcast(10, $"{MSG_PREFIX} Since you didn't spawn naturally you were put in as a {Enum.GetName(typeof(RoleType), roletospawn)}", false);
 							playertospawn.SetHealth(RolesHealth[roletospawn]);
 							GiveSpawnItemsToPlayer(playertospawn);
 							break;
@@ -266,67 +326,20 @@ namespace KingsSCPSL
 
 			}
 		}
-		private IEnumerator<float> AFKCheckTimer()
-		{
-			for (; ; )
-			{
-				yield return Timing.WaitForSeconds(10f);
-				foreach (GameObject o in PlayerManager.players)
-				{
-					ReferenceHub rh = o.GetComponent<ReferenceHub>();
-					string userid = rh.GetUserId(); 
-					if(hubAFKList.Contains(userid))
-					{
-						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch.", false);
-						if (!rh.GetOverwatch())
-							rh.SetOverwatch(true);
-					}
-					else if (hubAFKToBeKickedList.Contains(userid))
-					{
-						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch. <color=red> YOU WILL BE AUTOMATICALLY KICKED NEXT MTF SPAWN IF YOU REMAIN AFK!</color>", false);
-						if (!rh.GetOverwatch())
-							rh.SetOverwatch(true);
-					}
-					else if (rh.GetOverwatch())
-					{
-						rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> Please type \".back\" in console to be removed from overwatch.", false);
-					}
-				}
-			}
-		}
 
 		public void OnTeamRespawn(ref TeamRespawnEvent ev)
 		{
-			foreach (GameObject o in PlayerManager.players)
-			{
-				ReferenceHub rh = o.GetComponent<ReferenceHub>();
-				string userid = rh.GetUserId();
-				if (hubAFKToBeKickedList.Contains(userid))
-				{
-					// User has been AFK for 2 MTF/Chaos respawns, kick now.
-					hubAFKToBeKickedList.Remove(userid);
-					ServerConsole.Disconnect(o, "You were automatically kicked for being AFK for more than 2 team respawns!");
-
-				}
-				if (hubAFKList.Contains(userid))
-				{
-					// User has been AFK for 1 MTF/Chaos respawn.
-					hubAFKList.Remove(userid);
-					hubAFKToBeKickedList.Add(userid);
-					rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch. <color=red> YOU WILL BE AUTOMATICALLY KICKED SOON!</color>", false);
-				}
-			}
 		}
 
 		public void OnPlayerDeath(ref PlayerDeathEvent ev)
 		{
 			if (ev.Killer != null && ev.Player != null)
-			{ 
+			{
 				foreach (GameObject o in PlayerManager.players)
 				{
 					ReferenceHub rh = o.GetComponent<ReferenceHub>();
 					if (rh.serverRoles.RemoteAdmin)
-						rh.queryProcessor.TargetReply(rh.characterClassManager.connectionToClient, $"KingsSCPSL#{ev.Info.Attacker} ({ev.Killer.characterClassManager.CurClass}) killed {ev.Player.nicknameSync.MyNick} - {ev.Player.characterClassManager.UserId} ({ev.Player.characterClassManager.CurClass}) with {DamageTypes.FromIndex(ev.Info.Tool)}.", true, true, string.Empty);
+						rh.queryProcessor.TargetReply(rh.characterClassManager.connectionToClient, $"KingsSCPSL#{ev.Info.Attacker} ({ev.Killer.characterClassManager.CurClass}) killed {ev.Player.nicknameSync.MyNick} - {ev.Player.characterClassManager.UserId} ({ev.Player.characterClassManager.CurClass}) with {ev.Info.Tool}.", true, true, string.Empty);
 
 				}
 			}
@@ -337,9 +350,9 @@ namespace KingsSCPSL
 			_ = DoBan(ev);
 		}
 
-		public async Task DoBan(PlayerBannedEvent ev) 
+		public async Task DoBan(PlayerBannedEvent ev)
 		{
-			
+
 			string banned_user_id = ev.Details.Id;
 			double banduration = TimeSpan.FromTicks(ev.Details.Expires - ev.Details.IssuanceTime).TotalSeconds;
 			ReferenceHub adminHub = Player.GetPlayer(ev.Details.Issuer);
@@ -350,12 +363,12 @@ namespace KingsSCPSL
 			Log.Info($"Admin Name: {adminHub.nicknameSync.MyNick}");
 			Log.Info($"Admin ID: {adminId}");
 			Log.Info($"Duration: {banduration}");
-			if(banduration.ToString().Contains("1576800000"))
+			if (banduration.ToString().Contains("1576800000"))
 			{
 				banduration = 0;
 				Log.Info($"Duration UPDATED TO PERM!");
 			}
-			
+
 			if (await PlayerManagement.IssueBan(banned_user_id, ev.Details.OriginalName, adminId, banduration.ToString(), ev.Type))
 			{
 				Log.Info($"Successfully pushed ban for {banned_user_id} to the web API!");
@@ -369,7 +382,7 @@ namespace KingsSCPSL
 				adminHub.Broadcast(15, $"ERROR while adding ban to web API for: {ev.Details.OriginalName}({banned_user_id})", false);
 				Log.Error($"FATAL BANNING ERROR! PlayerManagement.IssueBan() Failed to push to web API");
 			}
-			
+
 		}
 
 		public void OnCommand(ref RACommandEvent ev)
@@ -397,30 +410,34 @@ namespace KingsSCPSL
 
 				switch (args[0].ToLower())
 				{
-					case "afkcheck":
+					case "muteall":
 						{
 							ev.Allow = false;
-							if (!sender.CheckPermission("king.afk"))
+							if (!sender.CheckPermission("king.muteall"))
 							{
 								ev.Sender.RAMessage("Permission denied.");
 								return;
 							}
-							ReferenceHub rh = Player.GetPlayer(string.Join(" ", args.Skip(1)));
-							if (rh == null)
+							int timeinseconds = 30;
+							if (args[1] != null)
 							{
-								ev.Sender.RAMessage("Player not found.", false);
-								return;
+								if (!Int32.TryParse(args[1], out timeinseconds))
+								{
+									timeinseconds = 30;
+								}
 							}
-							if (rh.characterClassManager.CurClass != RoleType.Spectator)
+							foreach (GameObject o in PlayerManager.players)
 							{
-								rh.Broadcast(12, "You are in <color=blue>OVERWATCH MODE</color> because you were AFK. Please type \".back\" in console to be removed from overwatch.", false);
-								rh.characterClassManager.SetClassID(RoleType.Spectator);
-								rh.SetOverwatch(true);
-								hubAFKList.Add(rh.GetUserId());
-							}
-							else
-							{
-								ev.Sender.RAMessage("Player is already in spectator! Please run the AFK command on non-spectating players!");
+								ReferenceHub rh = o.GetComponent<ReferenceHub>();
+								if (!rh.CheckPermission("king.ignoremute"))
+								{
+									if (rh.characterClassManager.CurClass == RoleType.Spectator || rh.characterClassManager.CurClass == RoleType.None)
+									{
+										rh.Broadcast(12, $"Spectator chat has been muted for {timeinseconds} ", false);
+										rh.characterClassManager.SetClassID(RoleType.Spectator);
+										rh.SetOverwatch(true);
+									}
+								}
 							}
 							return;
 						}
@@ -434,7 +451,8 @@ namespace KingsSCPSL
 
 		public void OnConsoleCommand(ConsoleCommandEvent ev)
 		{
-			try
+			/* No longer used.
+			 * try
 			{
 				switch (ev.Command)
 				{
@@ -456,7 +474,7 @@ namespace KingsSCPSL
 			catch (Exception e)
 			{
 				Log.Error($"Handling command error: {e}");
-			}
+			}*/
 		}
 
 		public void OnRoundEnd()
@@ -465,8 +483,12 @@ namespace KingsSCPSL
 				Timing.KillCoroutines(handle);
 		}
 
-		public void OnWaitingForPlayers()
+		public void WaitingForPlayers()
 		{
+			NineTailedFoxUnits.host.list.Add("<color=red>King's Playground</color>");
+			NineTailedFoxUnits.host.list.Add("<size=20><color=blue>https://discord.gg/hqfESe9</color></size>");
+			bSpectatorsMuted = false;
+			bRoundStarted = false;
 			foreach (CoroutineHandle handle in Coroutines)
 				Timing.KillCoroutines(handle);
 		}
@@ -568,5 +590,37 @@ namespace KingsSCPSL
 					break;
 			}
 		}
+
+		public static void TryReplacePlayer(ReferenceHub replacing)
+		{
+			Log.Debug($"[AFK Check] Tryreplace now");
+			if (replacing.characterClassManager.CurClass != RoleType.Spectator && replacing.characterClassManager.CurClass != RoleType.None && replacing.characterClassManager.CurClass != RoleType.Tutorial)
+			{
+				Log.Debug($"[AFK Check] Tryreplace in TEAM RIP");
+				Inventory.SyncListItemInfo items = replacing.inventory.items;
+				RoleType role = replacing.GetRole();
+				Vector3 pos = replacing.transform.position;
+				int health = (int)replacing.playerStats.health;
+				string ammo = replacing.ammoBox.amount;
+				Log.Debug($"[AFK Check] Tryreplace in TEAM RIP, {role} {pos} {health} {ammo}");
+				ReferenceHub player = Player.GetHubs().FirstOrDefault(x => x.GetRole() == RoleType.Spectator && x.characterClassManager.UserId != string.Empty && !x.GetOverwatch() && x != replacing);
+				if (player != null)
+				{
+					Log.Info($"[TryReplace] Replacing player {replacing.nicknameSync.MyNick} with player {player.nicknameSync.MyNick}");
+					player.SetRole(role);
+					Timing.CallDelayed(0.3f, () =>
+					{
+						player.SetPosition(pos);
+						player.inventory.items.ToList().Clear();
+						foreach (var item in items) player.inventory.AddNewItem(item.id);
+						player.playerStats.health = health;
+						player.ammoBox.Networkamount = ammo;
+						player.Broadcast(10, $"{MSG_PREFIX} You have replaced a player who has disconnected.", false);
+					});
+				}
+			}
+		}
+
+
 	}
 }
