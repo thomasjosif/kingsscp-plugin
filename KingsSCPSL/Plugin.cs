@@ -132,6 +132,7 @@ namespace KingsSCPSL
 				Events.WaitingForPlayersEvent += EventHandlers.WaitingForPlayers;
 				Events.TeamRespawnEvent += EventHandlers.OnTeamRespawn;
                 Events.PlayerBannedEvent += EventHandlers.OnPlayerBanned;
+                Events.PreAuthEvent += EventHandlers.OnPreAuth;
 				Log.Info($"KingsSCPSL plugin loaded. Written by Thomasjosif");
 			}
 			catch (Exception e)
@@ -156,6 +157,7 @@ namespace KingsSCPSL
 			Events.WaitingForPlayersEvent -= EventHandlers.WaitingForPlayers;
 			Events.TeamRespawnEvent -= EventHandlers.OnTeamRespawn;
             Events.PlayerBannedEvent -= EventHandlers.OnPlayerBanned;
+            Events.PreAuthEvent -= EventHandlers.OnPreAuth;
             EventHandlers = null;
 
 			Timing.KillCoroutines(cor);

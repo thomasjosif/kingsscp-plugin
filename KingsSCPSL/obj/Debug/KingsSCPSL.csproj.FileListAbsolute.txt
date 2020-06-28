@@ -4,7 +4,6 @@ D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\Assembly-CSharp_publicized.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\BouncyCastle.Crypto.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\EXILED.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\EXILED_Events.dll
-D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\EXILED_Idler.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\EXILED_Permissions.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\Mirror.Authenticators.dll
 D:\SCPSL\EXILED\KingsSCPSL\KingsSCPSL\bin\Debug\Mirror.Components.dll

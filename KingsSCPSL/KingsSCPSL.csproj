@@ -46,7 +46,7 @@
       <HintPath>..\..\References\0Harmony.dll</HintPath>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>..\..\References\Exiled\Assembly-CSharp.dll</HintPath>
+      <HintPath>..\..\References\Assembly-CSharp.dll</HintPath>
     </Reference>
     <Reference Include="Assembly-CSharp-firstpass, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
@@ -64,15 +64,11 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\References\Exiled\EXILED.dll</HintPath>
     </Reference>
-    <Reference Include="EXILED_Events, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="EXILED_Events, Version=1.0.0.0, Culture=neutral, processorArchitecture=AMD64">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\References\Exiled\EXILED_Events.dll</HintPath>
     </Reference>
-    <Reference Include="EXILED_Idler, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\References\Exiled\EXILED_Idler.dll</HintPath>
-    </Reference>
-    <Reference Include="EXILED_Permissions, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="EXILED_Permissions, Version=1.0.0.0, Culture=neutral, processorArchitecture=AMD64">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\..\References\Exiled\EXILED_Permissions.dll</HintPath>
     </Reference>

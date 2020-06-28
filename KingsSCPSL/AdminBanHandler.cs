@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Web;
 using EXILED;
 using EXILED.Extensions;
 using GameCore;
@@ -21,14 +22,13 @@ using Harmony;
 using static KingsSCPSL.Plugin;
 using static KingsSCPSL.PlayerManagement;
 using LiteNetLib;
-
 using LiteNetLib4Mirror;
 using LiteNetLib.Utils;
 namespace KingsSCPSL
 {
     public class PlayerManagement
     {
-        public static async Task<bool> IssueBan(string userID, string userName, string adminID, string durationinseconds, BanHandler.BanType type)
+        public static async Task<bool> IssueBan(string userID, string userName, string adminID, string durationinseconds, BanHandler.BanType type, string reason)
         {
             using (HttpClient client = new HttpClient())
             {
@@ -40,8 +40,14 @@ namespace KingsSCPSL
                 else if (type == BanHandler.BanType.IP)
                 {
                     typeofban = "1";
+                    return true;
                 }
-                var webRequest = await client.GetAsync("https://bans.kingsplayground.fun/issueban.php?KEY=" + Plugin.APIKey + "&STEAMID=" + userID + "&USERNAME=" + userName + "&AID=" + adminID + "&TYPE=" + typeofban + "&DURATION=" + durationinseconds);
+                if (reason != "")
+                    reason = WebUtility.UrlEncode(reason);
+                else
+                    reason = WebUtility.UrlEncode("No reason provided.");
+
+                var webRequest = await client.GetAsync("https://bans.kingsplayground.fun/issueban.php?KEY=" + Plugin.APIKey + "&STEAMID=" + userID + "&USERNAME=" + userName + "&AID=" + adminID + "&TYPE=" + typeofban + "&DURATION=" + durationinseconds + "&REASON=" + reason);
 
                 if (!webRequest.IsSuccessStatusCode)
                 {
@@ -75,7 +81,7 @@ namespace KingsSCPSL
                 }
 
                 string apiResponse = await webRequest.Content.ReadAsStringAsync();
-
+                Log.Info($"BAN API RESPONSE: {apiResponse}");
                 if (apiResponse.Contains("OK"))
                     return false;
                 else if (apiResponse.Contains("BAN"))

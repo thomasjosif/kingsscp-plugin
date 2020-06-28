@@ -20,8 +20,38 @@ using System.Threading.Tasks;
 using LiteNetLib;
 using LiteNetLib4Mirror;
 using LiteNetLib.Utils;
+using System.Diagnostics;
+
 namespace KingsSCPSL
 {
+	internal enum KickReason : byte
+	{
+		Ban,
+		IPBan
+	}
+
+	internal readonly struct PlayerToKick : IEquatable<PlayerToKick>
+	{
+		private readonly string userId;
+		internal readonly KickReason reason;
+		internal readonly uint creationTime;
+
+		internal PlayerToKick(string userId, KickReason reason)
+		{
+			this.userId = userId;
+			this.reason = reason;
+			creationTime = (uint)EventHandlers.stopwatch.Elapsed.TotalSeconds;
+		}
+
+		public bool Equals(PlayerToKick other) =>
+			string.Equals(userId, other.userId, StringComparison.InvariantCultureIgnoreCase);
+
+		public override bool Equals(object obj) => obj is PlayerToKick other && Equals(other);
+
+		public override int GetHashCode() =>
+			userId != null ? StringComparer.OrdinalIgnoreCase.GetHashCode(userId) : 0;
+	}
+
 	public class EventHandlers
 	{
 		public Plugin plugin;
@@ -29,6 +59,7 @@ namespace KingsSCPSL
 
 		public static string MSG_PREFIX = "<color=white>[</color><color=green>KingsSCPSL</color><color=white>]</color>";
 		public static string BAN_MSG = "<size=70><color=red>You are banned. </color><size=70>Please visit <color=blue> https://bans.kingsplayground.fun/ </color>for more information.</size></size>";
+		public static string BAN_MSG_IP = "<size=70><color=red>You are IP banned. </color><size=70>Please visit <color=blue> https://bans.kingsplayground.fun/ </color>for more information.</size></size>";
 		private int iSCPCount = 0;
 		private int iFacilityGuardCount = 0;
 		private int iClassDCount = 0;
@@ -37,6 +68,7 @@ namespace KingsSCPSL
 		private int iNotSpawnedCount = 0;
 		private int iTotalChaos = 0;
 		private bool bChaosOnStart = false;
+		private int iMaxPlayers = 64;
 
 		private bool bRoundStarted = false;
 		private bool bSpectatorsMuted = false;
@@ -50,6 +82,14 @@ namespace KingsSCPSL
 		public Dictionary<RoleType, int> RolesHealth;
 		public Dictionary<string, long> ConnectTime = new Dictionary<string, long>();
 		public CustomInventory Inventories;
+		private const byte BypassFlags = (1 << 1) | (1 << 3); //IgnoreBans or IgnoreGeoblock
+
+		internal static readonly Stopwatch stopwatch = new Stopwatch();
+		private static readonly Stopwatch cleanupStopwatch = new Stopwatch();
+		private static readonly HashSet<PlayerToKick> ToKick = new HashSet<PlayerToKick>();
+		private static readonly HashSet<PlayerToKick> ToClear = new HashSet<PlayerToKick>();
+		private static readonly NetDataReader reader = new NetDataReader();
+		private static readonly NetDataWriter writer = new NetDataWriter();
 
 		public EventHandlers(Dictionary<RoleType, int> health, CustomInventory inven)
 		{
@@ -61,31 +101,59 @@ namespace KingsSCPSL
 			_ = ConnectChecks(ev);
 		}
 
+		public void OnPreAuth(ref PreauthEvent ev)
+		{
+			_ = BanChecks(ev);
+		}
+		public async Task BanChecks(PreauthEvent ev)
+		{
+			Log.Info($" USERID: {ev.UserId} connected, performing banchecks!");
+			if (await PlayerManagement.IsBanned(ev.UserId, false))
+			{
+				ReferenceHub hub = Player.GetPlayer(ev.UserId);
+				if (hub != null)
+					ServerConsole.Disconnect(hub.characterClassManager.connectionToClient,
+						BAN_MSG);
+				else
+				{
+					StartStopwatch();
+					ToKick.Add(new PlayerToKick(ev.UserId, KickReason.Ban));
+				}
+				return;
+			}
+		}
 		public async Task ConnectChecks(PlayerJoinEvent ev)
 		{
-			if (await PlayerManagement.IsBanned(ev.Player.GetUserId(), false))
+			if (ToKick.TryGetValue(new PlayerToKick(ev.Player.characterClassManager.UserId, KickReason.Ban),
+				out var tk))
 			{
-				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, $"{BAN_MSG}");
+				ToKick.Remove(tk);
+				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient,
+					tk.reason == KickReason.Ban ? BAN_MSG : BAN_MSG_IP);
 			}
-			else if (await PlayerManagement.IsBanned(ev.Player.GetIpAddress(), true))
+
+			try
 			{
-				ServerConsole.Disconnect(ev.Player.characterClassManager.connectionToClient, $"{BAN_MSG}");
-			}
-			else
-			{
-				try
+				string group = await PlayerManagement.GetAdminRole(ev.Player.GetUserId());
+				if (group != "")
 				{
-					UserGroup group = ServerStatic.GetPermissionsHandler().GetGroup(await PlayerManagement.GetAdminRole(ev.Player.GetUserId()));
-					ev.Player.SetRank(group);
-					Log.Info($"Setting player rank now {ev.Player.nicknameSync.MyNick}");
+					ev.Player.SetRank(ServerStatic.GetPermissionsHandler()._groups[group]);
+					if (!ServerStatic.GetPermissionsHandler()._members.ContainsKey(ev.Player.characterClassManager.UserId))
+						ServerStatic.GetPermissionsHandler()._members.Add(ev.Player.characterClassManager.UserId, group);
+					else
+						ServerStatic.GetPermissionsHandler()._members[ev.Player.characterClassManager.UserId] = group;
+
+					Log.Info($"Setting player rank now {ev.Player.nicknameSync.MyNick} ({group})");
 				}
-				catch (Exception e)
-				{
-					Log.Error($"Error while trying to add rank from web API to player! Exception: {e}");
-				}
-				long unixTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-				ConnectTime[ev.Player.GetUserId()] = unixTimestamp;
+				else
+					Log.Info($"No rank entries found for {ev.Player.nicknameSync.MyNick}");
 			}
+			catch (Exception e)
+			{
+				Log.Error($"Error while trying to add rank from web API to player! Exception: {e}");
+			}
+			long unixTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+			ConnectTime[ev.Player.GetUserId()] = unixTimestamp;
 
 			/*if (bSpectatorsMuted)
 			{
@@ -106,7 +174,7 @@ namespace KingsSCPSL
 			if (hubNotSpawnedList.Contains(userid))
 				hubNotSpawnedList.Remove(userid);
 
-			TryReplacePlayer(ev.Player);
+			//TryReplacePlayer(ev.Player); Broken :(
 
 			_ = DisconnectChecks(ev);
 
@@ -122,7 +190,6 @@ namespace KingsSCPSL
 
 		public void OnRoundStart()
 		{
-			RoundSummary.RoundLock = true;
 			bRoundStarted = true;
 			sRespawnQueueArray = sRespawnQueue.ToCharArray();
 			iClassDCount = 0;
@@ -137,83 +204,86 @@ namespace KingsSCPSL
 			foreach (ReferenceHub hub in Player.GetHubs())
 			{
 				// Since this event fires before everyone has initially spawned, you need to wait before doing things like changing their health, adding items, etc
-				Timing.RunCoroutine(CountSpawnedPlayers(hub));
+				Timing.RunCoroutine(CountPlayer(hub));
 			}
 			Timing.RunCoroutine(CheckForSnap());
 		}
+		/***************************************************************************************************
+		 ************************************* SERVER SNAP DETECTION ***************************************
+		 ***************************************************************************************************/
 
-		public IEnumerator<float> CountSpawnedPlayers(ReferenceHub hub)
+		public IEnumerator<float> CountPlayer(ReferenceHub hub)
 		{
 			// Wait 4 seconds to make sure everyone is spawned in correctly
 			yield return Timing.WaitForSeconds(4f);
 
-			switch (hub.characterClassManager.CurClass)
+			if (hub != null)
 			{
-				case RoleType.ChaosInsurgency:
-					bChaosOnStart = true;
-					iTotalChaos++;
-					break;
-				case RoleType.ClassD:
-					iTotalPlayers++;
-					iClassDCount++;
-					break;
-				case RoleType.Scientist:
-					iTotalPlayers++;
-					iScientistCount++;
-					break;
-				case RoleType.Scp049:
-				case RoleType.Scp079:
-				case RoleType.Scp106:
-				case RoleType.Scp173:
-				case RoleType.Scp096:
-				case RoleType.Scp93953:
-				case RoleType.Scp93989:
-					iTotalPlayers++;
-					iSCPCount++;
-					break;
-				case RoleType.FacilityGuard:
-					iTotalPlayers++;
-					iFacilityGuardCount++;
-					break;
-				case RoleType.Spectator:
-					if (!hub.GetOverwatch())
-					{
+				// Count spawned players and add to global variables.
+				switch (hub.characterClassManager.CurClass)
+				{
+					case RoleType.ChaosInsurgency:
+						bChaosOnStart = true;
+						iTotalChaos++;
+						break;
+					case RoleType.ClassD:
 						iTotalPlayers++;
-						iNotSpawnedCount++;
-						hubNotSpawnedList.Add(hub.GetUserId());
-					}
-					break;
+						iClassDCount++;
+						break;
+					case RoleType.Scientist:
+						iTotalPlayers++;
+						iScientistCount++;
+						break;
+					case RoleType.Scp049:
+					case RoleType.Scp079:
+					case RoleType.Scp106:
+					case RoleType.Scp173:
+					case RoleType.Scp096:
+					case RoleType.Scp93953:
+					case RoleType.Scp93989:
+						iTotalPlayers++;
+						iSCPCount++;
+						break;
+					case RoleType.FacilityGuard:
+						iTotalPlayers++;
+						iFacilityGuardCount++;
+						break;
+					case RoleType.Spectator:
+						if (!hub.GetOverwatch())
+						{
+							// Player was not spawned (or latejoined) and will need to be spawned manually
+							iTotalPlayers++;
+							iNotSpawnedCount++;
+							hubNotSpawnedList.Add(hub.GetUserId());
+						}
+						break;
+				}
 			}
-
-//			foreach (GameObject o in PlayerManager.players)
-	//		{
-		//		ReferenceHub rh = o.GetComponent<ReferenceHub>();
-			//	rh.Broadcast(10, $"Chaos: {iTotalChaos} Facility: {iFacilityGuardCount} SCP: {iSCPCount} DBoi: {iClassDCount} Scie: {iScientistCount}", false);
-			//}
-			// Possibly fix issue where "SCP's WIN" at beginning of round	
-			yield return Timing.WaitForSeconds(60f);
-			RoundSummary.RoundLock = false;
 		}
 
 		public IEnumerator<float> CheckForSnap()
 		{
-			
-			//Wait 8 seconds to make sure everyone is counted
+			// We wait for 8 seconds to verify that everyone has spawned and been counted by the above function
 			yield return Timing.WaitForSeconds(8f);
 			var random = new System.Random();
 
-			for (int i = 0; i <= iTotalPlayers; i++)
+			if (hubNotSpawnedList.Count > 0)
+				Log.Info($"Server snap detected! We have {hubNotSpawnedList.Count} non-spawned players!");
+
+			// Iterate over the total number of players counted
+			for (int i = 0; i < iTotalPlayers; i++)
 			{
+				// If everyone has been spawned, stop looping!
 				if (hubNotSpawnedList.Count <= 0)
 					break;
-				else
-					Log.Info("Server snap detected!");
+
 				int teamnum = (int)Char.GetNumericValue(sRespawnQueueArray[0]);
 				bool tospawn = false;
 				RoleType roletospawn = RoleType.None;
 
 				switch (teamnum)
 				{
+					// SCP
 					case 0:
 						{
 							if (iSCPCount > 0)
@@ -245,6 +315,7 @@ namespace KingsSCPSL
 							}
 							break;
 						}
+					// Chaos / Facility
 					case 1:
 						{
 							if (bChaosOnStart)
@@ -274,6 +345,7 @@ namespace KingsSCPSL
 								break;
 							}
 						}
+					// Scientist
 					case 3:
 						{
 							if (iScientistCount > 0)
@@ -287,6 +359,7 @@ namespace KingsSCPSL
 							}
 							break;
 						}
+					// Class D
 					case 4:
 						{
 							if (iClassDCount > 0)
@@ -301,18 +374,23 @@ namespace KingsSCPSL
 							break;
 						}
 				}
+
 				sRespawnQueueArray = RemoveFromArrayAt(sRespawnQueueArray, 0);
+
 				if (tospawn)
 				{
 					int index;
 					ReferenceHub playertospawn;
-					for (; ; )
+
+					// Loop over max clients till we find a replacement
+					for (int j = 0; j < iMaxPlayers; j++)
 					{
 						index = random.Next(hubNotSpawnedList.Count());
 						playertospawn = Player.GetPlayer(hubNotSpawnedList[index]);
 						hubNotSpawnedList.Remove(hubNotSpawnedList[index]);
 						if (playertospawn.characterClassManager.CurClass == RoleType.Spectator && playertospawn != null && !playertospawn.GetOverwatch())
 						{
+
 							Log.Info($"Spawning in valid player {playertospawn.nicknameSync.MyNick} as {Enum.GetName(typeof(RoleType), roletospawn)}");
 
 							playertospawn.characterClassManager.SetClassID(roletospawn);
@@ -325,8 +403,109 @@ namespace KingsSCPSL
 				}
 
 			}
+
+			// Second pass to make sure we have all the required SCP's Spawned!
+			sRespawnQueueArray = sRespawnQueue.ToCharArray();
+			iTotalPlayers = 0;
+			iSCPCount = 0;
+			int iNeededSCPCount = 0;
+
+			foreach (GameObject o in PlayerManager.players)
+			{
+				ReferenceHub rh = o.GetComponent<ReferenceHub>();
+
+				if (rh != null)
+				{
+
+					iTotalPlayers++;
+					switch (rh.characterClassManager.CurClass)
+					{
+						case RoleType.Scp049:
+						case RoleType.Scp079:
+						case RoleType.Scp106:
+						case RoleType.Scp173:
+						case RoleType.Scp096:
+						case RoleType.Scp93953:
+						case RoleType.Scp93989:
+							iSCPCount++;
+							Log.Info($"Found {rh.GetUserId()} (SCP)");
+							break;
+						default:
+							Log.Info($"Found {rh.GetUserId()} (Not SCP)");
+							break;
+					}
+				}
+			}
+
+
+			for (int i = 0; i < iTotalPlayers; i++)
+			{
+				int teamnum = (int)Char.GetNumericValue(sRespawnQueueArray[0]);
+
+				if (teamnum == 0)
+				{
+					iNeededSCPCount++;
+				}
+				sRespawnQueueArray = RemoveFromArrayAt(sRespawnQueueArray, 0);
+			}
+
+			Log.Info($"Needed SCP's: {iNeededSCPCount} SCP's Counted: {iSCPCount}");
+			if (iSCPCount < iNeededSCPCount)
+			{
+				Log.Info("Not enough SCP's Spawned! Correcting now.");
+				for (int i = 0; i <= (iNeededSCPCount - iSCPCount); i++)
+				{
+					ReferenceHub playertospawn;
+					RoleType roletospawn = RoleType.None;
+					for (int j = 0; j < iMaxPlayers; j++)
+					{
+						playertospawn = GetRandomPlayer();
+						if (playertospawn != null && !playertospawn.GetOverwatch() && NotSCP(playertospawn))
+						{
+							int scprand = random.Next(0, 4);
+							switch (scprand)
+							{
+								case 0:
+									roletospawn = RoleType.Scp049;
+									break;
+								case 1:
+									roletospawn = RoleType.Scp096;
+									break;
+								case 2:
+									roletospawn = RoleType.Scp173;
+									break;
+								case 3:
+									roletospawn = RoleType.Scp106;
+									break;
+								case 4:
+									roletospawn = RoleType.Scp079;
+									break;
+							}
+							Log.Info($"Spawning in valid player {playertospawn.nicknameSync.MyNick} as {Enum.GetName(typeof(RoleType), roletospawn)} to fix the SCP Count!");
+
+							playertospawn.SetRole(roletospawn);
+							playertospawn.Broadcast(10, $"{MSG_PREFIX} Since not enough SCP's spawned your were put in as a {Enum.GetName(typeof(RoleType), roletospawn)}", false);
+							playertospawn.SetHealth(RolesHealth[roletospawn]);
+							break;
+						}
+					}
+				}
+			}
+
+			/*foreach (GameObject o in PlayerManager.players)
+			{
+				ReferenceHub hub = o.GetComponent<ReferenceHub>();
+				if (isDeveloper(hub))
+				{
+					hub.SetRankName("KILL TARGET");
+					hub.SetvvRankColor("pink");
+				}
+			}*/
 		}
 
+		/***************************************************************************************************
+		 ************************************* END SERVER SNAP DETECTION ***********************************
+		 ***************************************************************************************************/
 		public void OnTeamRespawn(ref TeamRespawnEvent ev)
 		{
 		}
@@ -369,7 +548,7 @@ namespace KingsSCPSL
 				Log.Info($"Duration UPDATED TO PERM!");
 			}
 
-			if (await PlayerManagement.IssueBan(banned_user_id, ev.Details.OriginalName, adminId, banduration.ToString(), ev.Type))
+			if (await PlayerManagement.IssueBan(banned_user_id, ev.Details.OriginalName, adminId, banduration.ToString(), ev.Type, ev.Details.Reason))
 			{
 				Log.Info($"Successfully pushed ban for {banned_user_id} to the web API!");
 
@@ -387,14 +566,14 @@ namespace KingsSCPSL
 
 		public void OnCommand(ref RACommandEvent ev)
 		{
-			try
+			/*try
 			{
 				if (ev.Command.Contains("REQUEST_DATA PLAYER_LIST SILENT"))
 					return;
 
 				// Lots of this logging shit and generic formatting was stolen from admin-tools by the exiled devs.
 				string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-				string scpFolder = Path.Combine(appData, "SCP Secret Laboratory");
+				string scpFolder = Path.Combine(apvpData, "SCP Secret Laboratory");
 				string logs = Path.Combine(scpFolder, "AdminLogs");
 				string fileName = Path.Combine(logs, $"command_log-{ServerConsole.Port}.txt");
 				if (!Directory.Exists(logs))
@@ -446,7 +625,7 @@ namespace KingsSCPSL
 			catch (Exception e)
 			{
 				Log.Error($"Handling command error: {e}");
-			}
+			}*/
 		}
 
 		public void OnConsoleCommand(ConsoleCommandEvent ev)
@@ -479,6 +658,10 @@ namespace KingsSCPSL
 
 		public void OnRoundEnd()
 		{
+			ToKick.Clear();
+			stopwatch.Reset();
+			cleanupStopwatch.Reset();
+
 			foreach (CoroutineHandle handle in Coroutines)
 				Timing.KillCoroutines(handle);
 		}
@@ -515,9 +698,9 @@ namespace KingsSCPSL
 					{
 						player.inventory.AddNewItem(item);
 					}
-					player.ammoBox.SetOneAmount(0, "0");
-					player.ammoBox.SetOneAmount(1, "0");
-					player.ammoBox.SetOneAmount(2, "0");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 0);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 0);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 0);
 					break;
 				case RoleType.ChaosInsurgency:
 					foreach (ItemType item in Inventories.Chaos)
@@ -525,9 +708,9 @@ namespace KingsSCPSL
 						player.inventory.AddNewItem(item);
 
 					}
-					player.ammoBox.SetOneAmount(1, "90");
-					player.ammoBox.SetOneAmount(2, "250");
-					player.ammoBox.SetOneAmount(3, "125");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 90);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 250);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 125);
 					break;
 				case RoleType.NtfCadet:
 					foreach (ItemType item in Inventories.NtfCadet)
@@ -535,18 +718,18 @@ namespace KingsSCPSL
 						player.inventory.AddNewItem(item);
 
 					}
-					player.ammoBox.SetOneAmount(0, "120");
-					player.ammoBox.SetOneAmount(1, "120");
-					player.ammoBox.SetOneAmount(2, "250");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 120);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 120);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 250);
 					break;
 				case RoleType.NtfCommander:
 					foreach (ItemType item in Inventories.NtfCommander)
 					{
 						player.inventory.AddNewItem(item);
 					}
-					player.ammoBox.SetOneAmount(0, "120");
-					player.ammoBox.SetOneAmount(1, "0");
-					player.ammoBox.SetOneAmount(2, "100");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 120);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 0);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 100);
 					break;
 				case RoleType.NtfLieutenant:
 					foreach (ItemType item in Inventories.NtfLieutenant)
@@ -554,9 +737,9 @@ namespace KingsSCPSL
 						player.inventory.AddNewItem(item);
 
 					}
-					player.ammoBox.SetOneAmount(0, "250");
-					player.ammoBox.SetOneAmount(1, "125");
-					player.ammoBox.SetOneAmount(2, "125");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 250);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 125);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 125);
 					break;
 				case RoleType.NtfScientist:
 					foreach (ItemType item in Inventories.NtfScientist)
@@ -564,9 +747,9 @@ namespace KingsSCPSL
 						player.inventory.AddNewItem(item);
 
 					}
-					player.ammoBox.SetOneAmount(0, "320");
-					player.ammoBox.SetOneAmount(1, "125");
-					player.ammoBox.SetOneAmount(2, "125");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 320);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 125);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 125);
 					break;
 				case RoleType.Scientist:
 					foreach (ItemType item in Inventories.Scientist)
@@ -574,9 +757,9 @@ namespace KingsSCPSL
 						player.inventory.AddNewItem(item);
 
 					}
-					player.ammoBox.SetOneAmount(0, "0");
-					player.ammoBox.SetOneAmount(1, "0");
-					player.ammoBox.SetOneAmount(2, "0");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 0);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 0);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 0);
 					break;
 				case RoleType.FacilityGuard:
 					foreach (ItemType item in Inventories.Guard)
@@ -584,43 +767,139 @@ namespace KingsSCPSL
 						player.inventory.AddNewItem(item);
 
 					}
-					player.ammoBox.SetOneAmount(0, "80");
-					player.ammoBox.SetOneAmount(1, "145");
-					player.ammoBox.SetOneAmount(2, "80");
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped5, 80);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped7, 145);
+					player.SetAmmo(EXILED.ApiObjects.AmmoType.Dropped9, 80);
 					break;
 			}
 		}
 
-		public static void TryReplacePlayer(ReferenceHub replacing)
+		public static bool NotSCP(ReferenceHub player)
 		{
-			Log.Debug($"[AFK Check] Tryreplace now");
-			if (replacing.characterClassManager.CurClass != RoleType.Spectator && replacing.characterClassManager.CurClass != RoleType.None && replacing.characterClassManager.CurClass != RoleType.Tutorial)
+			switch (player.characterClassManager.CurClass)
 			{
-				Log.Debug($"[AFK Check] Tryreplace in TEAM RIP");
-				Inventory.SyncListItemInfo items = replacing.inventory.items;
-				RoleType role = replacing.GetRole();
-				Vector3 pos = replacing.transform.position;
-				int health = (int)replacing.playerStats.health;
-				string ammo = replacing.ammoBox.amount;
-				Log.Debug($"[AFK Check] Tryreplace in TEAM RIP, {role} {pos} {health} {ammo}");
-				ReferenceHub player = Player.GetHubs().FirstOrDefault(x => x.GetRole() == RoleType.Spectator && x.characterClassManager.UserId != string.Empty && !x.GetOverwatch() && x != replacing);
-				if (player != null)
-				{
-					Log.Info($"[TryReplace] Replacing player {replacing.nicknameSync.MyNick} with player {player.nicknameSync.MyNick}");
-					player.SetRole(role);
-					Timing.CallDelayed(0.3f, () =>
-					{
-						player.SetPosition(pos);
-						player.inventory.items.ToList().Clear();
-						foreach (var item in items) player.inventory.AddNewItem(item.id);
-						player.playerStats.health = health;
-						player.ammoBox.Networkamount = ammo;
-						player.Broadcast(10, $"{MSG_PREFIX} You have replaced a player who has disconnected.", false);
-					});
-				}
+				case RoleType.Scp049:
+				case RoleType.Scp079:
+				case RoleType.Scp106:
+				case RoleType.Scp173:
+				case RoleType.Scp096:
+				case RoleType.Scp93953:
+				case RoleType.Scp93989:
+					return false;
+				default:
+					return true;
 			}
 		}
 
+		public static ReferenceHub GetRandomPlayer()
+		{
+			var random = new System.Random();
+			return PlayerManager.players[random.Next(PlayerManager.players.Count)].GetComponent<ReferenceHub>();
+		}
 
+		public static bool isDeveloper(ReferenceHub hub)
+		{
+			if (hub.GetUserId() == "thomasjosif@northwood")
+			{
+				return true;
+			}
+			return false;
+		}
+
+		/*public static void TryReplacePlayer(ReferenceHub replacing)
+		{
+			Log.Debug($"[Tryreplace] Tryreplace now on {replacing} currently {ev.Killer.characterClassManager.CurClass}");
+
+			if (replacing.characterClassManager.CurClass != RoleType.Spectator && replacing.characterClassManager.CurClass != RoleType.None && replacing.characterClassManager.CurClass != RoleType.Tutorial)
+			{
+				Log.Debug($"[Tryreplace] ATTEMPTING REPLACE ON {replacing.nicknameSync.MyNick}");
+				// Credit: DCReplace :)
+
+				Inventory.SyncListItemInfo items = replacing.inventory.items;
+				RoleType role = replacing.GetRole();
+				Vector3 pos = replacing.transform.position;
+				float health = replacing.GetHealth();
+
+				// New strange ammo system because the old one was fucked.
+				Dictionary<EXILED.ApiObjects.AmmoType, uint> ammo = new Dictionary<EXILED.ApiObjects.AmmoType, uint>();
+				foreach (EXILED.ApiObjects.AmmoType atype in (EXILED.ApiObjects.AmmoType[])Enum.GetValues(typeof(EXILED.ApiObjects.AmmoType)))
+				{
+					ammo.Add(atype, replacing.GetAmmo(atype));
+				}
+
+				// Stuff for 079
+				byte Level079 = 0;
+				float Exp079 = 0f, AP079 = 0f;
+				if (replacing.characterClassManager.CurClass == RoleType.Scp079)
+				{
+					Level079 = Convert.ToByte(Scp079.GetLevel(replacing));
+					Exp079 = Scp079.GetExperience(replacing);
+					AP079 = Scp079.GetEnergy(replacing);
+				}
+
+				for (; ; )
+				{
+					ReferenceHub player = GetRandomPlayer();
+					if (player.GetRole() == RoleType.Spectator && player.characterClassManager.UserId != string.Empty && !player.GetOverwatch() && player != replacing)
+					{
+						Log.Info($"[TryReplace] Replacing player {replacing.nicknameSync.MyNick} with player {player.nicknameSync.MyNick}");
+						player.SetRole(role);
+						Timing.CallDelayed(0.3f, () =>
+						{
+							player.SetPosition(pos);
+							player.inventory.Clear();
+							foreach (var item in items) player.inventory.AddNewItem(item.id);
+							player.SetHealth(health);
+
+							foreach (EXILED.ApiObjects.AmmoType atype in (EXILED.ApiObjects.AmmoType[])Enum.GetValues(typeof(EXILED.ApiObjects.AmmoType)))
+							{
+								uint amount;
+								if (ammo.TryGetValue(atype, out amount))
+								{
+									replacing.SetAmmo(atype, amount);
+								}
+								else
+									Log.Error($"[Kings-SCP Plugin] ERROR: Tried to get a value from dict that did not exist! (Ammo)");
+							}
+							if (replacing.characterClassManager.CurClass == RoleType.Scp079)
+							{
+								Scp079.SetLevel(player, Level079, false);
+								Scp079.SetExperience(player, Exp079);
+								Scp079.SetEnergy(player, AP079);
+							}
+							player.Broadcast(10, $"{MSG_PREFIX} You have replaced a player who has disconnected.", false);
+						});
+					}
+				}
+			}
+		}*/
+
+		// Taken from VPNShield
+		private static void StartStopwatch()
+		{
+			if (stopwatch.IsRunning)
+			{
+				if (ToKick.Count <= 500 || cleanupStopwatch.ElapsedMilliseconds <= 240000) return;
+
+				//ToKick cleanup
+				ToClear.Clear();
+				uint secs = (uint)stopwatch.Elapsed.TotalSeconds - 180;
+
+				foreach (PlayerToKick player in ToKick)
+					if (player.creationTime < secs)
+						ToClear.Add(player);
+
+				foreach (PlayerToKick player in ToClear)
+					ToKick.Remove(player);
+
+				ToClear.Clear();
+				cleanupStopwatch.Restart();
+
+				return;
+			}
+
+			stopwatch.Start();
+			cleanupStopwatch.Start();
+		}
 	}
 }
